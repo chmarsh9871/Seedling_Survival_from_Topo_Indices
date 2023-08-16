@@ -1,0 +1,2674 @@
+gc()
+install.packages("lctools")
+install.packages("rgdal")
+install.packages("gbm")
+install.packages("dismo")
+install.packages("spatialEco")
+install.packages("raster")
+install.packages("RSAGA")
+library(parallel)
+library(envirem)
+library(raster)
+library(spatialEco)
+library(RSAGA)
+library(snow)
+library(dplyr)
+
+
+############
+############
+###              Making Metrics from DEM 
+############
+############
+
+#Get DEM
+DEM <- raster::raster("~/Downloads/AOI_DEM.tif")
+plot(DEM)
+
+#Heat Load Index
+Heat_load <- spatialEco::hli(DEM)
+plot(Heat_load )
+raster::writeRaster(Heat_load , "~/Heat_load .tiff", progress = 'text')
+
+#Topo Roughness Index
+Topo_rough <- spatialEco::tri(DEM, s = 3, exact = TRUE)
+plot(Topo_rough)
+raster::writeRaster(LUNA_tri, "~/Topo_rough.tiff", progress = 'text')
+
+#Topo Position Index
+Topo_pos_i <- spatialEco::tpi(DEM, scale = 3 , win = 'rectangle', normalize = FALSE)
+plot(Topo_pos_i)
+raster::writeRaster(LUNA_tpi, "~/Topo_pos_i.tiff", progress = 'text')
+
+#Topo Wetness Index
+
+## RSAGA requires SAGA software installed (https://sourceforge.net/projects/saga-gis/files/) 
+# to run the following SAGA functions. Additionally, SAGA requires files in "sgrd" format.
+# We included the DEM in sgrd in the "Part 2 - Data" folder.  
+
+DEM1 <- ("/Users/guestpc/Desktop/Part 2/Data/AOI_DEM.sgrd")
+TWI <- rsaga.wetness.index(DEM1,"~/Downloads/Topo_Wetne.sgrd")
+writeRaster(TWI, filename = "~/Downloads/Topo_Wetne.tif", format = "tif")
+
+############
+#############
+#  BRT Mods of Pipo Seedling Survival 
+#############
+#############
+
+
+D <- read.csv("C:/Users/chmarsh/Downloads/Plot_B1_2.csv")
+
+train1 <- dplyr::filter(D, RandG != 1 , RandG != 20)
+train2 <- dplyr::filter(D, RandG != 2 , RandG != 19)
+train3 <- dplyr::filter(D, RandG != 3 , RandG != 18)
+train4 <- dplyr::filter(D, RandG != 4 , RandG != 17)
+train5 <- dplyr::filter(D, RandG != 5 , RandG != 16)
+train6 <- dplyr::filter(D, RandG != 6 , RandG != 15)
+train7 <- dplyr::filter(D, RandG != 7 , RandG != 14)
+train8 <- dplyr::filter(D, RandG != 8 , RandG != 13)
+train9 <- dplyr::filter(D, RandG != 9 , RandG != 12)
+train10 <- dplyr::filter(D, RandG != 10 , RandG !=11)
+
+unique(train1$RandG)
+
+?base::Logic
+
+test1 <- dplyr::filter(D, RandG ==1 | RandG ==20 )
+test2 <- dplyr::filter(D, RandG ==2 | RandG ==19 )
+test3 <- dplyr::filter(D, RandG ==3 | RandG ==18 )
+test4 <- dplyr::filter(D, RandG ==4 | RandG ==17 )
+test5 <- dplyr::filter(D, RandG ==5 | RandG ==16 )
+test6 <- dplyr::filter(D, RandG ==6 | RandG ==15 )
+test7 <- dplyr::filter(D, RandG ==7 | RandG ==14 )
+test8 <- dplyr::filter(D, RandG ==8 | RandG ==13 )
+test9 <- dplyr::filter(D, RandG ==9 | RandG ==12 )
+test10 <- dplyr::filter(D, RandG ==10 | RandG ==11 )
+
+data.frame(colnames(D))
+
+############
+############
+########### Topo models w/ elevation
+############
+############
+
+
+topo_1 <- dismo::gbm.step(data=train1, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+
+# D2 = 1 - mean residual deviance / mean total deviance 
+topo_1_D2 <- 1 - 0.592/0.965
+summary(topo_1)
+dismo::gbm.plot(topo_1, common.scale = T, smooth = T)
+
+topo_1_predict <- predict.gbm(topo_1, test1, 
+                              n.trees = topo_1$gbm.call$best.trees, type="response")
+
+test_1c <- mutate(test1, topo_1_predict = topo_1_predict)
+
+topo_roc_test1 <- rocit(score = test_1c$topo_1_predict, class = test_1c$y4_live, method = "binormal")
+topo_1_AUC <- topo_roc_test1
+topo_1_mse <- mse( test_1c$y4_live, test_1c$topo_1_predict)
+
+topo_1_D2 #0.3865285
+topo_1_AUC #0.6074
+topo_1_mse #0.1074106
+
+files <- list.files("#folder containg topo layers + PISR layers " , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+topo1_spat_pred <-predict(stack, topo_1, 
+                          n.trees = topo_1$gbm.call$best.trees, 
+                          type="response", progress = 'text')
+
+plot(topo1_spat_pred)
+
+writeRaster(topo1_spat_pred, "~/seed_surv_predict_no_aspect/topo_1.tiff", 
+            progress = 'text', overwrite = T)
+
+#########
+
+nrow(train2)
+nrow(test2)
+
+topo_2 <- dismo::gbm.step(data=train2, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_2_D2 <- 1 - 0.477/0.933
+summary(topo_2)
+dismo::gbm.plot(topo_2, common.scale = T, smooth = T)
+
+topo_2_predict <- predict.gbm(topo_2, test2, 
+                              n.trees = topo_2$gbm.call$best.trees, type="response")
+
+test_2c <- mutate(test2, topo_2_predict = topo_2_predict)
+nrow(test_2c)
+topo_roc_test2 <- rocit(score = test_2c$topo_2_predict, class = test_2c$y4_live, method = "binormal")
+topo_2_AUC <- topo_roc_test2
+topo_2_MSE <- mse( test_2c$y4_live, test_2c$topo_2_predict)
+
+topo_2_D2 #0.488746
+topo_2_AUC # 0.5173
+topo_2_MSE # 0.1815151
+
+topo2_spat_pred <- predict(stack, topo_2, 
+                           n.trees = topo_NE2$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo2_spat_pred)
+
+writeRaster(topo2_spat_pred, "~/seed_surv_predict_no_aspect/topo_2.tiff", progress = 'text')
+
+nrow(train1)
+nrow(test2)
+
+#########
+
+topo_3 <- dismo::gbm.step(data=train3, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_3_D2 <- 1 - 0.528/0.953
+summary(topo_3)
+dismo::gbm.plot(topo_3, common.scale = T, smooth = T)
+
+topo_3_predict <- predict.gbm(topo_3, test3, 
+                              n.trees = topo_3$gbm.call$best.trees, type="response")
+
+test_3c <- mutate(test3, topo_3_predict = topo_3_predict)
+nrow(test_3c)
+topo_roc_test3 <- rocit(score = test_3c$topo_3_predict, class = test_3c$y4_live, method = "binormal")
+topo_3_AUC <- topo_roc_test3
+topo_3_MSE <- mse( test_3c$y4_live, test_3c$topo_3_predict)
+
+topo_3_D2 #0.4459601
+topo_3_AUC #0.5068
+topo_3_MSE #0.1293248
+
+topo3_spat_pred <- predict(stack, topo_3, 
+                           n.trees = topo_3$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo3_spat_pred)
+
+writeRaster(topo3_spat_pred, "~/seed_surv_predict_no_aspect/topo_3_.tiff", progress = 'text')
+
+nrow(train3)
+nrow(test3)
+
+#########
+
+data.frame(colnames(train4))
+nrow(test4)
+
+topo_4 <- dismo::gbm.step(data=train4, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_4_D2 <- 1 - 0.559/0.988
+summary(topo_4)
+dismo::gbm.plot(topo_4, common.scale = T, smooth = T)
+
+topo_4_predict <- predict.gbm(topo_4, test4, 
+                              n.trees = topo_4$gbm.call$best.trees, type="response")
+
+test_4c <- mutate(test4, topo_4_predict = topo_4_predict)
+nrow(test_4c)
+topo_roc_test4 <- rocit(score = test_4c$topo_4_predict, class = test_4c$y4_live, method = "binormal")
+topo_4_AUC <- topo_roc_test4
+topo_4_MSE <- mse( test_4c$y4_live, test_4c$topo_4_predict)
+
+topo_4_D2 # 0.45342105
+topo_4_AUC # 0.585
+topo_4_MSE # 0.07082244
+
+topo4_spat_pred <- predict(stack, topo_4, 
+                           n.trees = topo_4$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo4_spat_pred)
+
+writeRaster(topo4_spat_pred, "~/seed_surv_predict_no_aspect/topo_4.tiff", progress = 'text')
+
+#########
+
+
+topo_5 <- dismo::gbm.step(data=train5, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_5_D2 <- 1 - 0.548/0.924
+summary(topo_5)
+dismo::gbm.plot(topo_5, common.scale = T, smooth = T)
+
+topo_5_predict <- predict.gbm(topo_5, test5, 
+                              n.trees = topo_5$gbm.call$best.trees, type="response")
+
+test_5c <- mutate(test5, topo_5_predict = topo_5_predict)
+nrow(test_5c)
+topo_roc_test5 <- rocit(score = test_5c$topo_5_predict, class = test_5c$y4_live, method = "binormal")
+topo_5_AUC <- topo_roc_test5
+topo_5_MSE <- mse( test_5c$y4_live, test_5c$topo_5_predict)
+
+topo_5_D2  # 0.3636364
+topo_5_AUC # 0.6058
+topo_5_MSE # 0.1828166
+
+topo5_spat_pred <- predict(stack, topo_5, 
+                           n.trees = topo_5$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo5_spat_pred)
+
+writeRaster(topo5_spat_pred, "~/seed_surv_predict_no_aspect/topo_5.tiff", progress = 'text')
+
+#####
+
+nrow(train3)
+nrow(test6)
+
+topo_6 <- dismo::gbm.step(data=train6, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_6_D2 <- 1 - 0.505/0.933
+summary(topo_6)
+dismo::gbm.plot(topo_6, common.scale = T, smooth = T)
+
+topo_6_predict <- predict.gbm(topo_6, test6, 
+                              n.trees = topo_6$gbm.call$best.trees, type="response")
+
+test_6c <- mutate(test6, topo_6_predict = topo_6_predict)
+nrow(test_6c)
+topo_roc_test6 <- rocit(score = test_6c$topo_6_predict, class = test_6c$y4_live, method = "binormal")
+topo_6_AUC <- topo_roc_test6
+topo_6_MSE <- mse( test_6c$y4_live, test_6c$topo_6_predict)
+
+topo_6_D2  #
+topo_6_AUC #
+topo_6_MSE #
+
+topo6_spat_pred <- predict(stack, topo_6, 
+                           n.trees = topo_6$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo6_spat_pred)
+
+writeRaster(topo6_spat_pred, "~/seed_surv_predict_no_aspect/topo_6_.tiff", progress = 'text')
+
+#########
+nrow(train7)
+nrow(test7)
+
+topo_7 <- dismo::gbm.step(data=train7, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_7_D2 <- 1 - 0.54/0.906
+summary(topo_7)
+dismo::gbm.plot(topo_7, common.scale = T, smooth = T)
+
+topo_7_predict <- predict.gbm(topo_7, test7, 
+                              n.trees = topo_7$gbm.call$best.trees, type="response")
+
+test_7c <- mutate(test7, topo_7_predict = topo_7_predict)
+nrow(test_7c)
+topo_roc_test7 <- rocit(score = test_7c$topo_7_predict, class = test_7c$y4_live, method = "binormal")
+topo_7_AUC <- topo_roc_test7
+topo_7_MSE <- mse( test_7c$y4_live, test_7c$topo_7_predict)
+
+topo_7_D2  #
+topo_7_AUC #
+topo_7_MSE #
+
+topo7_spat_pred <- predict(stack, topo_7, 
+                           n.trees = topo_7$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo7_spat_pred)
+
+writeRaster(topo7_spat_pred, "~/seed_surv_predict_no_aspect/topo_7_.tiff", progress = 'text')
+
+#########
+nrow(train8)
+nrow(test8)
+
+topo_8 <- dismo::gbm.step(data=train8, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_8_D2 <- 1 - 0.538/0.939
+summary(topo_8)
+dismo::gbm.plot(topo_8, common.scale = T, smooth = T)
+
+topo_8_predict <- predict.gbm(topo_8, test8, 
+                              n.trees = topo_8$gbm.call$best.trees, type="response")
+
+test_8c <- mutate(test8, topo_8_predict = topo_8_predict)
+nrow(test_8c)
+topo_roc_test8 <- rocit(score = test_8c$topo_8_predict, class = test_8c$y4_live, method = "binormal")
+topo_8_AUC <- topo_roc_test8
+topo_8_MSE <- mse( test_8c$y4_live, test_8c$topo_8_predict)
+
+topo_8_D2  #
+topo_8_AUC #
+topo_8_MSE #
+
+topo8_spat_pred <- predict(stack, topo_8, 
+                           n.trees = topo_8$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo8_spat_pred)
+
+writeRaster(topo8_spat_pred, "~/seed_surv_predict_no_aspect/topo_8.tiff", progress = 'text')
+
+#####
+#########
+nrow(train9)
+nrow(test9)
+
+topo_9 <- dismo::gbm.step(data=train9, gbm.x = c(87:90,92,93), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+topo_9_D2  <- 1 - 0.58/0.943
+summary(topo_9)
+dismo::gbm.plot(topo_9, common.scale = T, smooth = T)
+
+topo_9_predict <- predict.gbm(topo_9, test9, 
+                              n.trees = topo_9$gbm.call$best.trees, type="response")
+
+test_9c <- mutate(test9, topo_9_predict = topo_9_predict)
+nrow(test_9c)
+topo_roc_test9 <- rocit(score = test_9c$topo_9_predict, class = test_9c$y4_live, method = "binormal")
+topo_9_AUC <- topo_roc_test9
+topo_9_MSE <- mse( test_9c$y4_live, test_9c$topo_9_predict)
+
+topo_9_D2  #
+topo_9_AUC #
+topo_9_MSE #
+
+topo9_spat_pred <- predict(stack, topo_9, 
+                           n.trees = topo_9$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(topo9_spat_pred)
+
+writeRaster(topo9_spat_pred, "~/seed_surv_predict_no_aspect/topo_9_.tiff", progress = 'text')
+
+#####
+#####
+#########
+nrow(train9)
+nrow(test10)
+
+topo_10 <- dismo::gbm.step(data=train10, gbm.x = c(87:90,92,93), gbm.y = 8,
+                           family = "bernoulli", tree.complexity = 3,
+                           learning.rate = 0.01,
+                           bag.fraction = 0.5,
+                           max.trees = 10000,
+                           tolerance.methods = "auto",
+                           plot.folds = TRUE)
+topo_10_D2 <- 1 - 0.559/0.944
+summary(topo_10)
+dismo::gbm.plot(topo_10, common.scale = T, smooth = T, show.contrib = T)
+
+topo_10_predict <- predict.gbm(topo_10, test10, 
+                               n.trees = topo_10$gbm.call$best.trees, type="response")
+
+test_10c <- mutate(test10, topo_10_predict = topo_10_predict)
+nrow(test_10c)
+topo_roc_test10 <- rocit(score = test_10c$topo_10_predict, class = test_10c$y4_live, method = "binormal")
+topo_10_AUC <- topo_roc_test10
+topo_10_MSE <- mse( test_10c$y4_live, test_10c$topo_10_predict)
+
+topo_10_D2  #
+topo_10_AUC #
+topo_10_MSE #
+
+topo10_spat_pred <- predict(stack, topo_10, 
+                            n.trees = topo_10$gbm.call$best.trees, 
+                            type="response", progress = 'text')
+
+plot(topo10_spat_pred)
+
+writeRaster(topo10_spat_pred, "~/seed_surv_predict_no_aspect/topo_10.tiff", progress = 'text')
+
+#####
+#####
+#####    NO ELE
+#####
+#####
+
+data.frame(colnames(train1))
+
+topo_NE1 <- dismo::gbm.step(data=train1, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            prev.stratify = TRUE,site.weights = rep(1, nrow(train1)),
+                            var.monotone = rep(0, length(gbm.x)),
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_1_D2 <- 1 - 0.579/0.965
+summary(topo_NE1)
+gbm.perspec()
+dismo::gbm.plot(topo_NE1, common.scale = T, smooth = T)
+gbm.interactions(topo_NE1)
+gbm.perspec(topo_NE1, 5,3)
+dev.off()
+
+topo_NE1_predict <- predict.gbm(topo_NE1, test1, 
+                                n.trees = topo_NE1$gbm.call$best.trees, type="response")
+
+test_c <- mutate(test1, topo_NE1_predict = topo_NE1_predict)
+nrow(test_c)
+topo_NE_roc_test1 <- rocit(score = test_c$topo_NE1_predict, class = test_c$y4_live, method = "binormal")
+topo_NE_1_AUC <- topo_NE_roc_test1
+topo_NE_1_MSE <- mse( test_c$y4_live, test_c$topo_NE1_predict)
+
+topo_NE_1_D2  # 0.4
+topo_NE_1_AUC # 0.6287
+topo_NE_1_MSE # 0.1076485
+
+calc.deviance(obs=test_c$y4_live, pred= topo_NE1_predict , calc.mean = TRUE)
+
+topo_NE_1_spat_pred <- predict(stack, topo_NE1, 
+                               n.trees = topo_NE1$gbm.call$best.trees, 
+                               type="response", progress = 'text')
+
+plot(topo_NE_1_spat_pred)
+
+writeRaster(topo_NE_1_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_1.tiff", progress = 'text', overwrite = T)
+
+#########
+
+nrow(train2)
+nrow(test2)
+data.frame(colnames(train2))
+
+topo_NE2 <- dismo::gbm.step(data=train2, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_2_D2 <- 1 - 0.509/0.933
+summary(topo_NE2)
+dismo::gbm.plot(topo_NE2, common.scale = T, smooth = T)
+
+topo_NE2_predict <- predict.gbm(topo_NE2, test2, 
+                                n.trees = topo_NE1$gbm.call$best.trees, type="response")
+
+test_2c <- mutate(test2, topo_NE2_predict = topo_NE2_predict)
+nrow(test_2c)
+topo_NE_roc_test2 <- rocit(score = test_2c$topo_NE2_predict, class = test_2c$y4_live, method = "binormal")
+topo_NE_2_AUC <- topo_NE_roc_test2
+topo_NE_2_MSE <- mse( test_2c$y4_live, test_2c$topo_NE2_predict)
+
+topo_NE_2_D2  #
+topo_NE_2_AUC #
+topo_NE_2_MSE #
+
+topo_NE_2_spat_pred <- predict(stack, topo_NE2, 
+                               n.trees = topo_NE2$gbm.call$best.trees, 
+                               type="response", progress = 'text')
+
+plot(topo_NE_2_spat_pred)
+
+writeRaster(topo_NE_2_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_2.tiff", progress = 'text')
+
+nrow(train2)
+nrow(test2)
+
+#########
+data.frame(colnames(train3))
+topo_NE3 <- dismo::gbm.step(data=train3, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_3_D2 <-  1 - 0.578/0.953
+summary(topo_NE3)
+dismo::gbm.plot(topo_NE3, common.scale = T, smooth = T)
+
+topo_NE3_predict <- predict.gbm(topo_NE3, test3, 
+                                n.trees = topo_NE1$gbm.call$best.trees, type="response")
+
+test_3c <- mutate(test3, topo_NE3_predict = topo_NE3_predict)
+nrow(test_3c)
+topo_NE_roc_test3 <- rocit(score = test_3c$topo_NE3_predict, class = test_3c$y4_live, method = "binormal")
+topo_NE_3_AUC <- topo_NE_roc_test3
+topo_NE_3_MSE <- mse( test_3c$y4_live, test_3c$topo_NE3_predict)
+
+topo_NE_3_D2  #
+topo_NE_3_AUC #
+topo_NE_3_MSE #
+
+topo_NE_3_spat_pred <- predict(stack, topo_NE3, 
+                               n.trees = topo_NE3$gbm.call$best.trees, 
+                               type="response", progress = 'text')
+
+plot(topo_NE_3_spat_pred)
+
+writeRaster(topo_NE_3_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_3n.tiff", progress = 'text')
+
+nrow(train10)
+nrow(test3)
+
+#########
+
+nrow(train4)
+nrow(test4)
+data.frame(colnames(train4))
+
+topo_NE4 <- dismo::gbm.step(data=train4, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_4_D2 <- 1 - 0.558/0.988
+summary(topo_NE4)
+dismo::gbm.plot(topo_NE4, common.scale = T, smooth = T)
+
+topo_NE4_predict <- predict.gbm(topo_NE4, test4, 
+                                n.trees = topo_NE4$gbm.call$best.trees, type="response")
+
+test_4c <- mutate(test4, topo_NE4_predict = topo_NE4_predict)
+nrow(test_4c)
+topo_NE_roc_test4 <- rocit(score = test_4c$topo_NE4_predict, class = test_4c$y4_live, method = "binormal")
+topo_NE_4_AUC <- topo_NE_roc_test4
+topo_NE_4_MSE <- mse( test_4c$y4_live, test_4c$topo_NE4_predict)
+
+topo_NE_4_D2  #
+topo_NE_4_AUC #
+topo_NE_4_MSE #
+
+topo4_spat_pred <- predict(stack, topo_NE4, 
+                           n.trees = topo_NE4$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+topo_NE_4_spat_pred <- topo4_spat_pred
+plot(topo_NE_4_spat_pred)
+
+writeRaster(topo_NE_4_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_4n.tiff", progress = 'text')
+
+#########
+
+nrow(train5)
+nrow(test5)
+data.frame(colnames(train5))
+
+topo_NE5 <- dismo::gbm.step(data=train5, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_5_D2 <- 1 - 0.593/0.924
+summary(topo_NE5)
+dismo::gbm.plot(topo_NE5, common.scale = T, smooth = T)
+
+topo_NE5_predict <- predict.gbm(topo_NE5, test5, 
+                                n.trees = topo_NE5$gbm.call$best.trees, type="response")
+
+test_5c <- mutate(test5, topo_NE5_predict = topo_NE5_predict)
+nrow(test_5c)
+topo_NE_roc_test5 <- rocit(score = test_5c$topo_NE5_predict, class = test_5c$y4_live, method = "binormal")
+topo_NE_5_AUC <- topo_NE_roc_test5
+topo_NE_5_MSE <- mse( test_5c$y4_live, test_5c$topo_NE5_predict)
+
+topo_NE_5_D2  #
+topo_NE_5_AUC #
+topo_NE_5_MSE #
+
+topo_NE_5_spat_pred <- predict(stack, topo_NE5, 
+                               n.trees = topo_NE5$gbm.call$best.trees, 
+                               type="response", progress = 'text')
+
+plot(topo_NE_5_spat_pred)
+
+writeRaster(topo_NE_5_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_5n.tiff", progress = 'text')
+
+#####
+
+nrow(train6)
+nrow(test6)
+data.frame(colnames(train6))
+topo_NE6 <- dismo::gbm.step(data=train6, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_6_D2 <- 1 - 0.533/0.933
+summary(topo_NE6)
+dismo::gbm.plot(topo_NE6, common.scale = T, smooth = T)
+
+topo_NE6_predict <- predict.gbm(topo_NE6, test6, 
+                                n.trees = topo_NE6$gbm.call$best.trees, type="response")
+
+test_6c <- mutate(test6, topo_NE6_predict = topo_NE6_predict)
+nrow(test_6c)
+topo_NE_roc_test6 <- rocit(score = test_6c$topo_NE6_predict, class = test_6c$y4_live, method = "binormal")
+topo_NE_6_AUC <- topo_NE_roc_test6
+topo_NE_6_MSE <- mse( test_6c$y4_live, test_6c$topo_NE6_predict)
+
+topo_NE_6_D2  #
+topo_NE_6_AUC #
+topo_NE_6_MSE #
+
+topo_NE_6_spat_pred <- predict(stack, topo_NE6, 
+                               n.trees = topo_NE6$gbm.call$best.trees, 
+                               type="response", progress = 'text')
+
+plot(topo_NE_6_spat_pred)
+
+writeRaster(topo_NE_6_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_6.tiff", progress = 'text')
+
+#########
+nrow(train7)
+nrow(test7)
+
+topo_NE7 <- dismo::gbm.step(data=train7, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_7_D2  <- 1 - 0.609/0.906
+summary(topo_NE7)
+dismo::gbm.plot(topo_NE7, common.scale = T, smooth = T)
+
+topo_NE7_predict <- predict.gbm(topo_NE7, test7, 
+                                n.trees = topo_NE7$gbm.call$best.trees, type="response")
+
+test_7c <- mutate(test7, topo_NE7_predict = topo_NE7_predict)
+nrow(test_7c)
+topo_NE_roc_test7 <- rocit(score = test_7c$topo_NE7_predict, class = test_7c$y4_live, method = "binormal")
+topo_NE_7_AUC <- topo_NE_roc_test7
+topo_NE_7_MSE <- mse( test_7c$y4_live, test_7c$topo_NE7_predict)
+
+topo_NE_7_D2  #
+topo_NE_7_AUC #
+topo_NE_7_MSE #
+
+topo_NE_7_spat_pred <- predict(stack, topo_NE7, 
+                               n.trees = topo_NE7$gbm.call$best.trees, 
+                               type="response", progress = 'text')
+
+plot(topo_NE_7_spat_pred)
+
+writeRaster(topo_NE_7_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_7_.tiff", progress = 'text')
+
+#########
+nrow(train8)
+nrow(test8)
+
+topo_NE8 <- dismo::gbm.step(data=train8, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_8_D2 <- 1 - 0.552/0.939
+summary(topo_NE8)
+dismo::gbm.plot(topo_NE8, common.scale = T, smooth = T)
+
+topo_NE8_predict <- predict.gbm(topo_NE8, test8, 
+                                n.trees = topo_NE8$gbm.call$best.trees, type="response")
+
+test_8c <- mutate(test8, topo_NE8_predict = topo_NE8_predict)
+nrow(test_8c)
+topo_NE_roc_test8 <- rocit(score = test_8c$topo_NE8_predict, class = test_8c$y4_live, method = "binormal")
+topo_NE_8_AUC <- topo_NE_roc_test8
+topo_NE_8_MSE <- mse( test_8c$y4_live, test_8c$topo_NE8_predict)
+
+topo_NE_8_D2  #
+topo_NE_8_AUC #
+topo_NE_8_MSE #
+
+topo_NE_8_spat_pred <- predict(stack, topo_NE8, 
+                               n.trees = topo_NE8$gbm.call$best.trees, 
+                               type="response", progress = 'text')
+
+plot(topo_NE_8_spat_pred)
+
+writeRaster(topo_NE_8_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_8.tiff", progress = 'text')
+
+#####
+#########
+nrow(train9)
+nrow(test9)
+data.frame(colnames(train9))
+topo_NE9 <- dismo::gbm.step(data=train9, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                            family = "bernoulli", tree.complexity = 3,
+                            learning.rate = 0.01,
+                            bag.fraction = 0.5,
+                            max.trees = 10000,
+                            tolerance.methods = "auto",
+                            plot.folds = TRUE)
+topo_NE_9_D2 <- 1 - 0.64/0.943
+summary(topo_NE9)
+dismo::gbm.plot(topo_NE9, common.scale = T, smooth = T)
+
+topo_NE9_predict <- predict.gbm(topo_NE9, test9, 
+                                n.trees = topo_NE9$gbm.call$best.trees, type="response")
+
+test_9c <- mutate(test9, topo_NE9_predict = topo_NE9_predict)
+nrow(test_9c)
+topo_NE_roc_test9 <- rocit(score = test_9c$topo_NE9_predict, class = test_9c$y4_live, method = "binormal")
+topo_NE_9_AUC <- topo_NE_roc_test9
+topo_NE_9_MSE <- mse( test_9c$y4_live, test_9c$topo_NE9_predict)
+
+topo_NE_9_D2  # 0.321315
+topo_NE_9_AUC # 0.6101
+topo_NE_9_MSE # 0.1653007
+
+topo9_NE_spat_pred <- predict(stack, topo_NE9, 
+                              n.trees = topo_NE9$gbm.call$best.trees, 
+                              type="response", progress = 'text')
+
+plot(topo9_NE_spat_pred)
+
+writeRaster(topo9_NE_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_9.tiff", progress = 'text')
+
+#####
+#####
+#########
+nrow(train10)
+nrow(test10)
+
+topo_NE10 <- dismo::gbm.step(data=train10, gbm.x = c(87,88,89,90,93), gbm.y = 8,
+                             family = "bernoulli", tree.complexity = 3,
+                             learning.rate = 0.01,
+                             bag.fraction = 0.5,
+                             max.trees = 10000,
+                             tolerance.methods = "auto",
+                             plot.folds = TRUE)
+topo_NE_10_D2 <- 1 - 0.578/0.944
+summary(topo_NE10)
+dismo::gbm.plot(topo_NE10, common.scale = T, smooth = T)
+
+topo_NE10_predict <- predict.gbm(topo_NE10, test10, 
+                                 n.trees = topo_NE10$gbm.call$best.trees, type="response")
+
+test_10c <- mutate(test10, topo_NE10_predict = topo_NE10_predict)
+nrow(test_10c)
+topo_NE_roc_test10 <- rocit(score = test_10c$topo_NE10_predict, class = test_10c$y4_live, method = "binormal")
+topo_NE_10_AUC <- topo_NE_roc_test10
+topo_NE_10_MSE <- mse( test_10c$y4_live, test_10c$topo_NE10_predict)
+
+topo_NE_10_D2  #
+topo_NE_10_AUC #
+topo_NE_10_MSE #
+
+topo_NE_10_spat_pred <- predict(stack, topo_NE10, 
+                                n.trees = topo_NE10$gbm.call$best.trees, 
+                                type="response", progress = 'text')
+
+plot(topo_NE_10_spat_pred)
+
+writeRaster(topo_NE_10_spat_pred, "~/seed_surv_predict_no_aspect/topo_NE_10.tiff", progress = 'text')
+
+#####
+
+#####
+#####
+#####    PISR
+#####
+#####
+
+data.frame(colnames(train1))
+
+topo_pisr1 <- dismo::gbm.step(data=train1, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+
+topo_pisr1_simp <- gbm.simplify(topo_pisr1, n.drops = 100)
+
+topo_pisr1 <- dismo::gbm.step(data=train1, 
+                              gbm.x=topo_pisr1_simp$pred.list[[20]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_1_D2 <- 1 - 0.459/0.965
+summary(topo_pisr1)
+dismo::gbm.plot(topo_pisr1, common.scale = T, smooth = T)
+
+topo_pisr1_predict <- predict.gbm(topo_pisr1, test1, 
+                                  n.trees = topo_pisr1$gbm.call$best.trees, type="response")
+
+test_c <- mutate(test1, topo_pisr1_predict = topo_pisr1_predict)
+nrow(test_c)
+topo_pisr_roc_test1 <- rocit(score = test_c$topo_pisr1_predict, class = test_c$y4_live, method = "binormal")
+topo_pisr_1_AUC <- topo_pisr_roc_test1
+topo_pisr_1_MSE <- mse( test_c$y4_live, test_c$topo_pisr1_predict)
+
+topo_pisr_1_D2  #
+topo_pisr_1_AUC #
+topo_pisr_1_MSE #
+
+topo_pisr_1_spat_pred <- predict(stack, topo_pisr1, 
+                                 n.trees = topo_pisr1$gbm.call$best.trees, 
+                                 type="response", progress = 'text')
+
+plot(topo_pisr_1_spat_pred)
+
+writeRaster(topo_pisr_1_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_1.tiff", progress = 'text', overwrite = T)
+
+#########
+
+nrow(train2)
+nrow(test2)
+data.frame(colnames(train2))
+topo_pisr2 <- dismo::gbm.step(data=train2, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+
+topo_pisr2_simp <- gbm.simplify(topo_pisr2, n.drops = 100)
+
+topo_pisr2 <- dismo::gbm.step(data=train2, 
+                              gbm.x=topo_pisr2_simp$pred.list[[21]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_2_D2 <- 1 - 0.398/0.933
+summary(topo_pisr2)
+dismo::gbm.plot(topo_pisr2, common.scale = T, smooth = T)
+
+topo_pisr2_predict <- predict.gbm(topo_pisr2, test2, 
+                                  n.trees = topo_pisr1$gbm.call$best.trees, type="response")
+
+test_2c <- mutate(test2, topo_pisr2_predict = topo_pisr2_predict)
+nrow(test_2c)
+topo_pisr_roc_test2 <- rocit(score = test_2c$topo_pisr2_predict, class = test_2c$y4_live, method = "binormal")
+topo_pisr_2_AUC <- topo_pisr_roc_test2
+topo_pisr_2_MSE <- mse( test_2c$y4_live, test_2c$topo_pisr2_predict)
+
+topo_pisr_2_D2  #
+topo_pisr_2_AUC #
+topo_pisr_2_MSE #
+
+topo_pisr_2_spat_pred <- predict(stack, topo_pisr2, 
+                                 n.trees = topo_pisr2$gbm.call$best.trees, 
+                                 type="response", progress = 'text')
+
+plot(topo_pisr_2_spat_pred)
+
+writeRaster(topo_pisr_2_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_2.tiff", progress = 'text')
+
+nrow(train2)
+nrow(test2)
+
+#########
+
+topo_pisr3 <- dismo::gbm.step(data=train3, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr3_simp <- gbm.simplify(topo_pisr3, n.drops = 100)
+
+topo_pisr3 <- dismo::gbm.step(data=train3, 
+                              gbm.x=topo_pisr3_simp$pred.list[[21]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto")
+
+topo_pisr_3_D2 <- 1 - 0.465/0.953
+summary(topo_pisr3)
+dismo::gbm.plot(topo_pisr3, common.scale = T, smooth = T)
+
+topo_pisr3_predict <- predict.gbm(topo_pisr3, test3, 
+                                  n.trees = topo_pisr1$gbm.call$best.trees, type="response")
+
+test_3c <- mutate(test3, topo_pisr3_predict = topo_pisr3_predict)
+nrow(test_3c)
+topo_pisr_roc_test3 <- rocit(score = test_3c$topo_pisr3_predict, class = test_3c$y4_live, method = "binormal")
+topo_pisr_3_AUC <- topo_pisr_roc_test3
+topo_pisr_3_MSE <- mse( test_3c$y4_live, test_3c$topo_pisr3_predict)
+
+topo_pisr_3_D2  #
+topo_pisr_3_AUC #
+topo_pisr_3_MSE #
+
+topo_pisr_3_spat_pred <- predict(stack, topo_pisr3, 
+                                 n.trees = topo_pisr3$gbm.call$best.trees, 
+                                 type="response", progress = 'text')
+
+plot(topo_pisr_3_spat_pred)
+
+writeRaster(topo_pisr_3_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_3.tiff", progress = 'text')
+
+nrow(train3)
+nrow(test3)
+
+#########
+
+nrow(train4)
+nrow(test4)
+
+topo_pisr4 <- dismo::gbm.step(data=train4, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+
+topo_pisr4_simp <- gbm.simplify(topo_pisr4, n.drops = 100)
+
+topo_pisr4 <- dismo::gbm.step(data=train4, 
+                              gbm.x=topo_pisr4_simp$pred.list[[21]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_4_D2 <- 1 - 0.519/0.988
+summary(topo_pisr4)
+dismo::gbm.plot(topo_pisr4, common.scale = T, smooth = T)
+
+topo_pisr4_predict <- predict.gbm(topo_pisr4, test4, 
+                                  n.trees = topo_pisr4$gbm.call$best.trees, type="response")
+
+test_4c <- mutate(test4, topo_pisr4_predict = topo_pisr4_predict)
+nrow(test_4c)
+topo_pisr_roc_test4 <- rocit(score = test_4c$topo_pisr4_predict, class = test_4c$y4_live, method = "binormal")
+topo_pisr_4_AUC <- topo_pisr_roc_test4
+topo_pisr_4_MSE <- mse( test_4c$y4_live, test_4c$topo_pisr4_predict)
+
+topo_pisr_4_D2  #
+topo_pisr_4_AUC #
+topo_pisr_4_MSE #
+
+topo4_spat_pred <- predict(stack, topo_pisr4, 
+                           n.trees = topo_pisr4$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+topo_pisr_4_spat_pred <- topo4_spat_pred 
+plot(topo_pisr_4_spat_pred)
+
+writeRaster(topo_pisr_4_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_4.tiff", progress = 'text')
+
+#########
+
+nrow(train5)
+nrow(test5)
+
+topo_pisr5 <- dismo::gbm.step(data=train5, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+
+topo_pisr5_simp <- gbm.simplify(topo_pisr5, n.drops = 100)
+
+topo_pisr5 <- dismo::gbm.step(data=train5, 
+                              gbm.x=topo_pisr5_simp$pred.list[[21]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_5_D2 <- 1 - 0.552/0.924
+summary(topo_pisr5)
+dismo::gbm.plot(topo_pisr5, common.scale = T, smooth = T)
+
+topo_pisr5_predict <- predict.gbm(topo_pisr5, test5, 
+                                  n.trees = topo_pisr5$gbm.call$best.trees, type="response")
+
+test_5c <- mutate(test5, topo_pisr5_predict = topo_pisr5_predict)
+nrow(test_5c)
+topo_pisr_roc_test5 <- rocit(score = test_5c$topo_pisr5_predict, class = test_5c$y4_live, method = "binormal")
+topo_pisr_5_AUC <- topo_pisr_roc_test5
+topo_pisr_5_MSE <- mse( test_5c$y4_live, test_5c$topo_pisr5_predict)
+
+topo_pisr_5_D2  #
+topo_pisr_5_AUC #
+topo_pisr_5_MSE #
+
+topo_pisr_5_spat_pred <- predict(stack, topo_pisr5, 
+                                 n.trees = topo_pisr5$gbm.call$best.trees, 
+                                 type="response", progress = 'text')
+
+plot(topo_pisr_5_spat_pred)
+
+writeRaster(topo_pisr_5_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_5.tiff", progress = 'text')
+
+#####
+
+nrow(train6)
+nrow(test6)
+
+topo_pisr6 <- dismo::gbm.step(data=train6, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+
+topo_pisr6_simp <- gbm.simplify(topo_pisr6, n.drops = 100)
+
+topo_pisr6 <- dismo::gbm.step(data=train6, 
+                              gbm.x=topo_pisr6_simp$pred.list[[22]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_6_D2 <- 1 - 0.471/0.933
+summary(topo_pisr6)
+dismo::gbm.plot(topo_pisr6, common.scale = T, smooth = T)
+
+topo_pisr6_predict <- predict.gbm(topo_pisr6, test6, 
+                                  n.trees = topo_pisr6$gbm.call$best.trees, type="response")
+
+test_6c <- mutate(test6, topo_pisr6_predict = topo_pisr6_predict)
+nrow(test_6c)
+topo_pisr_roc_test6 <- rocit(score = test_6c$topo_pisr6_predict, class = test_6c$y4_live, method = "binormal")
+topo_pisr_6_AUC <- topo_pisr_roc_test6
+topo_pisr_6_MSE <- mse( test_6c$y4_live, test_6c$topo_pisr6_predict)
+
+topo_pisr_6_D2  #
+topo_pisr_6_AUC #
+topo_pisr_6_MSE #
+
+topo_pisr_6_spat_pred <- predict(stack, topo_pisr6, 
+                                 n.trees = topo_pisr6$gbm.call$best.trees, 
+                                 type="response", progress = 'text')
+
+plot(topo_pisr_6_spat_pred)
+
+writeRaster(topo_pisr_6_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_6.tiff", progress = 'text')
+
+#########
+nrow(train7)
+nrow(test7)
+data.frame(colnames(train7))
+
+topo_pisr7 <- dismo::gbm.step(data=train7, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr7_simp <- gbm.simplify(topo_pisr7, n.drops = 100)
+
+topo_pisr7 <- dismo::gbm.step(data=train7, 
+                              gbm.x=topo_pisr7_simp$pred.list[[20]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_7_D2 <- 1 - 0.465/0.906
+summary(topo_pisr7)
+dismo::gbm.plot(topo_pisr7, common.scale = T, smooth = T)
+
+topo_pisr7_predict <- predict.gbm(topo_pisr7, test7, 
+                                  n.trees = topo_pisr7$gbm.call$best.trees, type="response")
+
+test_7c <- mutate(test7, topo_pisr7_predict = topo_pisr7_predict)
+nrow(test_7c)
+topo_pisr_roc_test7 <- rocit(score = test_7c$topo_pisr7_predict, class = test_7c$y4_live, method = "binormal")
+topo_pisr_7_AUC <- topo_pisr_roc_test7
+topo_pisr_7_MSE <- mse( test_7c$y4_live, test_7c$topo_pisr7_predict)
+
+topo_pisr_7_D2  #
+topo_pisr_7_AUC #
+topo_pisr_7_MSE #
+
+topo_pisr_7_spat_pred <- predict(stack, topo_pisr7, 
+                                 n.trees = topo_pisr7$gbm.call$best.trees, 
+                                 type="response", progress = 'text')
+
+plot(topo_pisr_7_spat_pred)
+
+writeRaster(topo_pisr_7_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_7_.tiff", progress = 'text')
+
+#########
+nrow(train8)
+nrow(test8)
+
+topo_pisr8 <- dismo::gbm.step(data=train8, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr8_simp <- gbm.simplify(topo_pisr8, n.drops = 100)
+
+topo_pisr8 <- dismo::gbm.step(data=train8, 
+                              gbm.x=topo_pisr8_simp$pred.list[[20]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_8_D2  <- 1 - 0.471/0.939
+summary(topo_pisr8)
+dismo::gbm.plot(topo_pisr8, common.scale = T, smooth = T)
+
+topo_pisr8_predict <- predict.gbm(topo_pisr8, test8, 
+                                  n.trees = topo_pisr8$gbm.call$best.trees, type="response")
+
+test_8c <- mutate(test8, topo_pisr8_predict = topo_pisr8_predict)
+nrow(test_8c)
+topo_pisr_roc_test8 <- rocit(score = test_8c$topo_pisr8_predict, class = test_8c$y4_live, method = "binormal")
+topo_pisr_8_AUC <- topo_pisr_roc_test8
+topo_pisr_8_MSE <- mse( test_8c$y4_live, test_8c$topo_pisr8_predict)
+
+topo_pisr_8_D2  #
+topo_pisr_8_AUC #
+topo_pisr_8_MSE #
+
+topo_pisr_8_spat_pred <- predict(stack, topo_pisr8, 
+                                 n.trees = topo_pisr8$gbm.call$best.trees, 
+                                 type="response", progress = 'text')
+
+plot(topo_pisr_8_spat_pred)
+
+writeRaster(topo_pisr_8_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_8.tiff", progress = 'text')
+
+install.packages("pdp")
+library(pdp)
+
+
+#####
+#########
+nrow(train9)
+nrow(test9)
+
+topo_pisr9 <- dismo::gbm.step(data=train9, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr9_simp <- gbm.simplify(topo_pisr9, n.drops = 100)
+
+topo_pisr9 <- dismo::gbm.step(data=train9, 
+                              gbm.x=topo_pisr9_simp$pred.list[[20]],
+                              gbm.y = 8,
+                              family = "bernoulli", tree.complexity = 3,
+                              learning.rate = 0.01,
+                              bag.fraction = 0.5,
+                              max.trees = 10000,
+                              tolerance.methods = "auto",
+                              plot.folds = TRUE)
+topo_pisr_9_D2 <- 1 - 0.487/0.943
+summary(topo_pisr9)
+dismo::gbm.plot(topo_pisr9, common.scale = T, smooth = T)
+
+topo_pisr9_predict <- predict.gbm(topo_pisr9, test9, 
+                                  n.trees = topo_pisr9$gbm.call$best.trees, type="response")
+
+test_9c <- mutate(test9, topo_pisr9_predict = topo_pisr9_predict)
+nrow(test_9c)
+topo_pisr_roc_test9 <- rocit(score = test_9c$topo_pisr9_predict, class = test_9c$y4_live, method = "binormal")
+topo_pisr_9_AUC <- topo_pisr_roc_test9
+topo_pisr_9_MSE <- mse( test_9c$y4_live, test_9c$topo_pisr9_predict)
+
+topo_pisr_9_D2  #
+topo_pisr_9_AUC #
+topo_pisr_9_MSE #
+
+topo9_pisr_spat_pred <- predict(stack, topo_pisr9, 
+                                n.trees = topo_pisr9$gbm.call$best.trees, 
+                                type="response", progress = 'text')
+
+plot(topo9_pisr_spat_pred)
+
+writeRaster(topo9_pisr_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_9.tiff", progress = 'text')
+
+#####
+#####
+#########
+nrow(train10)
+nrow(test10)
+
+topo_pisr10 <- dismo::gbm.step(data=train10, gbm.x = c(9:32,87:90,92,93), gbm.y = 8,
+                               family = "bernoulli", tree.complexity = 3,
+                               learning.rate = 0.01,
+                               bag.fraction = 0.5,
+                               max.trees = 10000,
+                               tolerance.methods = "auto",
+                               plot.folds = TRUE)
+
+topo_pisr10_simp <- gbm.simplify(topo_pisr10, n.drops = 100)
+
+topo_pisr10 <- dismo::gbm.step(data=train10, 
+                               gbm.x=topo_pisr10_simp$pred.list[[20]],
+                               gbm.y = 8,
+                               family = "bernoulli", tree.complexity = 3,
+                               learning.rate = 0.01,
+                               bag.fraction = 0.5,
+                               max.trees = 10000,
+                               tolerance.methods = "auto",
+                               plot.folds = TRUE)
+topo_pisr_10_D2 <- 1 - 0.479/0.944
+summary(topo_pisr10)
+dismo::gbm.plot(topo_pisr10, common.scale = T, smooth = T)
+
+topo_pisr10_predict <- predict.gbm(topo_pisr10, test10, 
+                                   n.trees = topo_pisr10$gbm.call$best.trees, type="response")
+
+test_10c <- mutate(test10, topo_pisr10_predict = topo_pisr10_predict)
+nrow(test_10c)
+topo_pisr_roc_test10 <- rocit(score = test_10c$topo_pisr10_predict, class = test_10c$y4_live, method = "binormal")
+topo_pisr_10_AUC <- topo_pisr_roc_test10
+topo_pisr_10_MSE <- mse( test_10c$y4_live, test_10c$topo_pisr10_predict)
+
+topo_pisr_10_D2  #
+topo_pisr_10_AUC #
+topo_pisr_10_MSE #
+
+topo_pisr_10_spat_pred <- predict(stack, topo_pisr10, 
+                                  n.trees = topo_pisr10$gbm.call$best.trees, 
+                                  type="response", progress = 'text')
+
+plot(topo_pisr_10_spat_pred)
+
+writeRaster(topo_pisr_10_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_10.tiff", progress = 'text')
+
+
+#####
+#####
+#####    PISR No ELEV
+#####
+#####
+
+data.frame(colnames(train1))
+
+topo_pisr_NE1 <- dismo::gbm.step(data=train1, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+
+topo_pisr_NE1_simp <- gbm.simplify(topo_pisr_NE1, n.drops = 100)
+
+topo_pisr_NE1 <- dismo::gbm.step(data=train1, 
+                                 gbm.x=topo_pisr_NE1_simp$pred.list[[20]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE1_D2 <- 1 - 0.501/0.965
+summary(topo_pisr_NE1)
+dismo::gbm.plot(topo_pisr_NE1, common.scale = T, smooth = T)
+
+topo_pisr_NE1_predict <- predict.gbm(topo_pisr_NE1, test1, 
+                                     n.trees = topo_pisr_NE1$gbm.call$best.trees, type="response")
+
+test_c <- mutate(test1, topo_pisr_NE1_predict = topo_pisr_NE1_predict)
+nrow(test_c)
+topo_pisr_NE_roc_test1 <- rocit(score = test_c$topo_pisr_NE1_predict, class = test_c$y4_live, method = "binormal")
+topo_pisr_NE1_AUC <- topo_pisr_NE_roc_test1
+topo_pisr_NE1_MSE <- mse(test_c$y4_live, test_c$topo_pisr_NE1_predict)
+
+topo_pisr_NE1_D2  #
+topo_pisr_NE1_AUC #
+topo_pisr_NE1_MSE #
+
+topo_pisr_NE_1_spat_pred <- predict(stack, topo_pisr_NE1, 
+                                    n.trees = topo_pisr_NE1$gbm.call$best.trees, 
+                                    type="response", progress = 'text')
+
+plot(topo_pisr_NE_1_spat_pred)
+
+writeRaster(topo_pisr_NE_1_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_1.tiff", progress = 'text', overwrite = T)
+
+#########
+
+nrow(train2)
+nrow(test2)
+
+topo_pisr_NE2 <- dismo::gbm.step(data=train2, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+
+topo_pisr_NE2_simp <- gbm.simplify(topo_pisr_NE2, n.drops = 100)
+
+topo_pisr_NE2 <- dismo::gbm.step(data=train2, 
+                                 gbm.x=topo_pisr_NE2_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE2_D2 <- 1 - 0.424/0.933
+summary(topo_pisr_NE2)
+dismo::gbm.plot(topo_pisr_NE2, common.scale = T, smooth = T)
+
+topo_pisr_NE2_predict <- predict.gbm(topo_pisr_NE2, test2, 
+                                     n.trees = topo_pisr_NE1$gbm.call$best.trees, type="response")
+
+test_2c <- mutate(test2, topo_pisr_NE2_predict = topo_pisr_NE2_predict)
+nrow(test_2c)
+topo_pisr_NE_roc_test2 <- rocit(score = test_2c$topo_pisr_NE2_predict, class = test_2c$y4_live, method = "binormal")
+topo_pisr_NE2_AUC <- topo_pisr_NE_roc_test2
+topo_pisr_NE2_MSE <- mse( test_2c$y4_live, test_2c$topo_pisr_NE2_predict)
+
+
+topo_pisr_NE2_AUC # 0.5108
+topo_pisr_NE2_MSE # 0.1743554
+topo_pisr_NE2_D2 #
+
+
+topo_pisr_NE_2_spat_pred <- predict(stack, topo_pisr_NE2, 
+                                    n.trees = topo_pisr_NE2$gbm.call$best.trees, 
+                                    type="response", progress = 'text')
+
+plot(topo_pisr_NE_2_spat_pred)
+
+writeRaster(topo_pisr_NE_2_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_2.tiff", progress = 'text')
+
+nrow(train2)
+nrow(test2)
+
+#########
+
+topo_pisr_NE3 <- dismo::gbm.step(data=train3, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE3_simp <- gbm.simplify(topo_pisr_NE3, n.drops = 100)
+
+topo_pisr_NE3 <- dismo::gbm.step(data=train3, 
+                                 gbm.x=topo_pisr_NE3_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE3_D2 <- 1 - 0.485/0.953
+summary(topo_pisr_NE3)
+dismo::gbm.plot(topo_pisr_NE3, common.scale = T, smooth = T)
+
+topo_pisr_NE3_predict <- predict.gbm(topo_pisr_NE3, test3, 
+                                     n.trees = topo_pisr_NE1$gbm.call$best.trees, type="response")
+
+test_3c <- mutate(test3, topo_pisr_NE3_predict = topo_pisr_NE3_predict)
+nrow(test_3c)
+topo_pisr_NE_roc_test3 <- rocit(score = test_3c$topo_pisr_NE3_predict, class = test_3c$y4_live, method = "binormal")
+topo_pisr_NE3_AUC <- topo_pisr_NE_roc_test3
+topo_pisr_NE3_MSE <- mse( test_3c$y4_live, test_3c$topo_pisr_NE3_predict)
+
+topo_pisr_NE3_D2  #
+topo_pisr_NE3_AUC #
+topo_pisr_NE3_MSE #
+
+topo_pisr_NE_3_spat_pred <- predict(stack, topo_pisr_NE3, 
+                                    n.trees = topo_pisr_NE3$gbm.call$best.trees, 
+                                    type="response", progress = 'text')
+
+plot(topo_pisr_NE_3_spat_pred)
+
+writeRaster(topo_pisr_NE_3_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_3.tiff", progress = 'text')
+
+nrow(train3)
+nrow(test3)
+
+#########
+
+nrow(train4)
+nrow(test4)
+
+topo_pisr_NE4 <- dismo::gbm.step(data=train4, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+
+topo_pisr_NE4_simp <- gbm.simplify(topo_pisr_NE4, n.drops = 100)
+
+topo_pisr_NE4 <- dismo::gbm.step(data=train4, 
+                                 gbm.x=topo_pisr_NE4_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE4_D2 <- 1 - 0.483/0.988
+summary(topo_pisr_NE4)
+dismo::gbm.plot(topo_pisr_NE4, common.scale = T, smooth = T)
+
+topo_pisr_NE4_predict <- predict.gbm(topo_pisr_NE4, test4, 
+                                     n.trees = topo_pisr_NE4$gbm.call$best.trees, type="response")
+
+test_4c <- mutate(test4, topo_pisr_NE4_predict = topo_pisr_NE4_predict)
+nrow(test_4c)
+topo_pisr_NE_roc_test4 <- rocit(score = test_4c$topo_pisr_NE4_predict, class = test_4c$y4_live, method = "binormal")
+topo_pisr_NE4_AUC <- topo_pisr_NE_roc_test4
+topo_pisr_NE4_MSE <- mse( test_4c$y4_live, test_4c$topo_pisr_NE4_predict)
+
+topo_pisr_NE4_D2  #
+topo_pisr_NE4_AUC #
+topo_pisr_NE4_MSE #
+
+topo4_spat_pred <- predict(stack, topo_pisr_NE4, 
+                           n.trees = topo_pisr_NE4$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+topo_pisr_NE_4_spat_pred <- topo4_spat_pred 
+plot(topo_pisr_NE_4_spat_pred)
+
+writeRaster(topo_pisr_NE_4_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_4.tiff", progress = 'text')
+
+#########
+
+nrow(train5)
+nrow(test5)
+
+topo_pisr_NE5 <- dismo::gbm.step(data=train5, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+
+topo_pisr_NE5_simp <- gbm.simplify(topo_pisr_NE5, n.drops = 100)
+
+topo_pisr_NE5 <- dismo::gbm.step(data=train5, 
+                                 gbm.x=topo_pisr_NE5_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE5_D2 <- 1 - 0.523/0.924
+summary(topo_pisr_NE5)
+dismo::gbm.plot(topo_pisr_NE5, common.scale = T, smooth = T)
+
+topo_pisr_NE5_predict <- predict.gbm(topo_pisr_NE5, test5, 
+                                     n.trees = topo_pisr_NE5$gbm.call$best.trees, type="response")
+
+test_5c <- mutate(test5, topo_pisr_NE5_predict = topo_pisr_NE5_predict)
+nrow(test_5c)
+topo_pisr_NE_roc_test5 <- rocit(score = test_5c$topo_pisr_NE5_predict, class = test_5c$y4_live, method = "binormal")
+topo_pisr_NE5_AUC <- topo_pisr_NE_roc_test5
+topo_pisr_NE5_MSE <- mse( test_5c$y4_live, test_5c$topo_pisr_NE5_predict)
+
+topo_pisr_NE5_D2  #
+topo_pisr_NE5_AUC #
+topo_pisr_NE5_MSE #
+
+topo_pisr_NE_5_spat_pred <- predict(stack, topo_pisr_NE5, 
+                                    n.trees = topo_pisr_NE5$gbm.call$best.trees, 
+                                    type="response", progress = 'text')
+
+plot(topo_pisr_NE_5_spat_pred)
+
+writeRaster(topo_pisr_NE_5_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_5.tiff", progress = 'text')
+
+#####
+
+nrow(train6)
+nrow(test6)
+
+topo_pisr_NE6 <- dismo::gbm.step(data=train6, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+
+topo_pisr_NE6_simp <- gbm.simplify(topo_pisr_NE6, n.drops = 100)
+
+topo_pisr_NE6 <- dismo::gbm.step(data=train6, 
+                                 gbm.x=topo_pisr_NE6_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE6_D2 <- 1 - 0.445/0.933
+summary(topo_pisr_NE6)
+dismo::gbm.plot(topo_pisr_NE6, common.scale = T, smooth = T)
+
+topo_pisr_NE6_predict <- predict.gbm(topo_pisr_NE6, test6, 
+                                     n.trees = topo_pisr_NE6$gbm.call$best.trees, type="response")
+
+test_6c <- mutate(test6, topo_pisr_NE6_predict = topo_pisr_NE6_predict)
+nrow(test_6c)
+topo_pisr_NE_roc_test6 <- rocit(score = test_6c$topo_pisr_NE6_predict, class = test_6c$y4_live, method = "binormal")
+topo_pisr_NE6_AUC <- topo_pisr_NE_roc_test6
+topo_pisr_NE6_MSE <- mse( test_6c$y4_live, test_6c$topo_pisr_NE6_predict)
+
+topo_pisr_NE6_D2  # 0.5230439
+topo_pisr_NE6_AUC # 0.5235
+topo_pisr_NE6_MSE # 0.1802612
+
+topo_pisr_NE_6_spat_pred <- predict(stack, topo_pisr_NE6, 
+                                    n.trees = topo_pisr_NE6$gbm.call$best.trees, 
+                                    type="response", progress = 'text')
+
+plot(topo_pisr_NE_6_spat_pred)
+
+writeRaster(topo_pisr_NE_6_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_6.tiff", progress = 'text')
+
+#########
+nrow(train7)
+nrow(test7)
+
+topo_pisr_NE7 <- dismo::gbm.step(data=train7, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE7_simp <- gbm.simplify(topo_pisr_NE7, n.drops = 100)
+
+topo_pisr_NE7 <- dismo::gbm.step(data=train7, 
+                                 gbm.x=topo_pisr_NE7_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE7_D2 <- 1 - 0.519/0.906
+summary(topo_pisr_NE7)
+dismo::gbm.plot(topo_pisr_NE7, common.scale = T, smooth = T)
+
+topo_pisr_NE7_predict <- predict.gbm(topo_pisr_NE7, test7, 
+                                     n.trees = topo_pisr_NE7$gbm.call$best.trees, type="response")
+
+test_7c <- mutate(test7, topo_pisr_NE7_predict = topo_pisr_NE7_predict)
+nrow(test_7c)
+topo_pisr_NE_roc_test7 <- rocit(score = test_7c$topo_pisr_NE7_predict, class = test_7c$y4_live, method = "binormal")
+topo_pisr_NE7_AUC <- topo_pisr_NE_roc_test7
+topo_pisr_NE7_MSE <- mse( test_7c$y4_live, test_7c$topo_pisr_NE7_predict)
+
+topo_pisr_NE7_D2  #
+topo_pisr_NE7_AUC #
+topo_pisr_NE7_MSE #
+
+topo_pisr_NE_7_spat_pred <- predict(stack, topo_pisr_NE7, 
+                                    n.trees = topo_pisr_NE7$gbm.call$best.trees, 
+                                    type="response", progress = 'text')
+
+plot(topo_pisr_NE_7_spat_pred)
+
+writeRaster(topo_pisr_NE_7_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_7_.tiff", progress = 'text')
+
+#########
+nrow(train8)
+nrow(test8)
+
+topo_pisr_NE8 <- dismo::gbm.step(data=train8, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE8_simp <- gbm.simplify(topo_pisr_NE8, n.drops = 100)
+
+topo_pisr_NE8 <- dismo::gbm.step(data=train8, 
+                                 gbm.x=topo_pisr_NE8_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE8_D2 <- 1 - 0.488/0.939
+summary(topo_pisr_NE8)
+dismo::gbm.plot(topo_pisr_NE8, common.scale = T, smooth = T)
+
+topo_pisr_NE8_predict <- predict.gbm(topo_pisr_NE8, test8, 
+                                     n.trees = topo_pisr_NE8$gbm.call$best.trees, type="response")
+
+test_8c <- mutate(test8, topo_pisr_NE8_predict = topo_pisr_NE8_predict)
+nrow(test_8c)
+topo_pisr_NE_roc_test8 <- rocit(score = test_8c$topo_pisr_NE8_predict, class = test_8c$y4_live, method = "binormal")
+topo_pisr_NE8_AUC <- topo_pisr_NE_roc_test8
+topo_pisr_NE8_MSE <- mse( test_8c$y4_live, test_8c$topo_pisr_NE8_predict)
+
+topo_pisr_NE8_D2  #
+topo_pisr_NE8_AUC #
+topo_pisr_NE8_MSE #
+
+topo_pisr_NE_8_spat_pred <- predict(stack, topo_pisr_NE8, 
+                                    n.trees = topo_pisr_NE8$gbm.call$best.trees, 
+                                    type="response", progress = 'text')
+
+plot(topo_pisr_NE_8_spat_pred)
+
+writeRaster(topo_pisr_NE_8_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_8.tiff", progress = 'text')
+
+#####
+#########
+nrow(train9)
+nrow(test9)
+
+topo_pisr_NE9 <- dismo::gbm.step(data=train9, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE9_simp <- gbm.simplify(topo_pisr_NE9, n.drops = 100)
+
+topo_pisr_NE9 <- dismo::gbm.step(data=train9, 
+                                 gbm.x=topo_pisr_NE9_simp$pred.list[[19]],
+                                 gbm.y = 8,
+                                 family = "bernoulli", tree.complexity = 3,
+                                 learning.rate = 0.01,
+                                 bag.fraction = 0.5,
+                                 max.trees = 10000,
+                                 tolerance.methods = "auto",
+                                 plot.folds = TRUE)
+topo_pisr_NE9_D2 <- 1 - 0.513/0.943
+summary(topo_pisr_NE9)
+dismo::gbm.plot(topo_pisr_NE9, common.scale = T, smooth = T)
+
+topo_pisr_NE9_predict <- predict.gbm(topo_pisr_NE9, test9, 
+                                     n.trees = topo_pisr_NE9$gbm.call$best.trees, type="response")
+
+test_9c <- mutate(test9, topo_pisr_NE9_predict = topo_pisr_NE9_predict)
+nrow(test_9c)
+topo_pisr_NE_roc_test9 <- rocit(score = test_9c$topo_pisr_NE9_predict, class = test_9c$y4_live, method = "binormal")
+topo_pisr_NE9_AUC <- topo_pisr_NE_roc_test9
+topo_pisr_NE9_MSE <- mse( test_9c$y4_live, test_9c$topo_pisr_NE9_predict)
+
+topo_pisr_NE9_D2  #
+topo_pisr_NE9_AUC #
+topo_pisr_NE9_MSE #
+
+topo9_pisr_NE_spat_pred <- predict(stack, topo_pisr_NE9, 
+                                   n.trees = topo_pisr_NE9$gbm.call$best.trees, 
+                                   type="response", progress = 'text')
+
+plot(topo9_pisr_NE_spat_pred)
+
+writeRaster(topo9_pisr_NE_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_9.tiff", progress = 'text')
+
+#####
+#####
+#########
+nrow(train10)
+nrow(test10)
+
+topo_pisr_NE10 <- dismo::gbm.step(data=train10, gbm.x = c(9:32,87,88,89,90,93), gbm.y = 8,
+                                  family = "bernoulli", tree.complexity = 3,
+                                  learning.rate = 0.01,
+                                  bag.fraction = 0.5,
+                                  max.trees = 10000,
+                                  tolerance.methods = "auto",
+                                  plot.folds = TRUE)
+
+topo_pisr_NE10_simp <- gbm.simplify(topo_pisr_NE10, n.drops = 100)
+
+topo_pisr_NE10 <- dismo::gbm.step(data=train10, 
+                                  gbm.x=topo_pisr_NE10_simp$pred.list[[19]],
+                                  gbm.y = 8,
+                                  family = "bernoulli", tree.complexity = 3,
+                                  learning.rate = 0.01,
+                                  bag.fraction = 0.5,
+                                  max.trees = 10000,
+                                  tolerance.methods = "auto",
+                                  plot.folds = TRUE)
+topo_pisr_NE10_D2 <- 1 - 0.475/0.944
+summary(topo_pisr_NE10)
+dismo::gbm.plot(topo_pisr_NE10, common.scale = T, smooth = T)
+
+topo_pisr_NE10_predict <- predict.gbm(topo_pisr_NE10, test10, 
+                                      n.trees = topo_pisr_NE10$gbm.call$best.trees, type="response")
+
+test_10c <- mutate(test10, topo_pisr_NE10_predict = topo_pisr_NE10_predict)
+nrow(test_10c)
+topo_pisr_NE_roc_test10 <- rocit(score = test_10c$topo_pisr_NE10_predict, class = test_10c$y4_live, method = "binormal")
+topo_pisr_NE10_AUC <- topo_pisr_NE_roc_test10
+topo_pisr_NE10_MSE <- mse( test_10c$y4_live, test_10c$topo_pisr_NE10_predict)
+
+topo_pisr_NE10_D2  #
+topo_pisr_NE10_AUC #
+topo_pisr_NE10_MSE #
+
+
+topo_pisr_NE_10_spat_pred <- predict(stack, topo_pisr_NE10, 
+                                     n.trees = topo_pisr_NE10$gbm.call$best.trees, 
+                                     type="response", progress = 'text')
+
+plot(topo_pisr_NE_10_spat_pred)
+
+writeRaster(topo_pisr_NE_10_spat_pred, "~/seed_surv_predict_no_aspect/topo_pisr_NE_10.tiff", progress = 'text')
+
+#####
+#####
+####    Ensemble model 
+#####
+#####
+
+
+E <- read.csv("C:/Users/chmarsh/Documents/Plot_Mods.csv")
+
+train1 <- dplyr::filter(E, RandG != 1 , RandG != 20)
+train2 <- dplyr::filter(E, RandG != 2 , RandG != 19)
+train3 <- dplyr::filter(E, RandG != 3 , RandG != 18)
+train4 <- dplyr::filter(E, RandG != 4 , RandG != 17)
+train5 <- dplyr::filter(E, RandG != 5 , RandG != 16)
+train6 <- dplyr::filter(E, RandG != 6 , RandG != 15)
+train7 <- dplyr::filter(E, RandG != 7 , RandG != 14)
+train8 <- dplyr::filter(E, RandG != 8 , RandG != 13)
+train9 <- dplyr::filter(E, RandG != 9 , RandG != 12)
+train10 <- dplyr::filter(E, RandG != 10 , RandG !=11)
+
+test1 <- dplyr::filter(E, RandG ==1 | RandG ==20 )
+test2 <- dplyr::filter(E, RandG ==2 | RandG ==19 )
+test3 <- dplyr::filter(E, RandG ==3 | RandG ==18 )
+test4 <- dplyr::filter(E, RandG ==4 | RandG ==17 )
+test5 <- dplyr::filter(E, RandG ==5 | RandG ==16 )
+test6 <- dplyr::filter(E, RandG ==6 | RandG ==15 )
+test7 <- dplyr::filter(E, RandG ==7 | RandG ==14 )
+test8 <- dplyr::filter(E, RandG ==8 | RandG ==13 )
+test9 <- dplyr::filter(E, RandG ==9 | RandG ==12 )
+test10 <- dplyr::filter(E, RandG ==10 | RandG ==11 )
+
+data.frame(colnames(train1))
+
+#####
+####    
+#####
+
+mods1 <- dismo::gbm.step(data=train1, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods1_simp <- gbm.simplify(mods1, n.drops = 100)
+
+mods1 <- dismo::gbm.step(data=train1, 
+                         gbm.x=mods1_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods1_D2 <- 1 - 0.248/0.966
+summary(mods1)
+dismo::gbm.plot(topo1, common.scale = T, smooth = T)
+
+mods1_predict <- predict.gbm(mods1, test1, 
+                             n.trees = mods1$gbm.call$best.trees, type="response")
+
+test_1m <- mutate(test1, mods1_predict = mods1_predict)
+nrow(test_1m)
+mods1_roc_test1 <- rocit(score = test_1m$mods1_predict, class = test_1m$y4_live, method = "binormal")
+mods1_AUC <- mods1_roc_test1
+mods1_MSE <- mse( test_1m$y4_live, test_1m$mods1_predict )
+
+mods1_D2  #0.7432712
+mods1_AUC #0.9313
+mods1_MSE #0.05396847
+
+AIC(mods1)
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods1_spat_pred <- predict(stack, mods1, 
+                           n.trees = mods1$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods1_spat_pred)
+
+writeRaster(mods1_spat_pred, "~/seed_surv_predict_no_aspect/mods1_.tiff", progress = 'text')
+
+####
+#####
+
+mods2 <- dismo::gbm.step(data=train2, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods2_simp <- gbm.simplify(mods2, n.drops = 100)
+
+mods2 <- dismo::gbm.step(data=train2, 
+                         gbm.x=mods2_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods2_D2 <- 1 - 0.195/0.932
+summary(mods2)
+dismo::gbm.plot(mods2, common.scale = T, smooth = T)
+
+mods2_predict <- predict.gbm(mods2, test2, 
+                             n.trees = mods2$gbm.call$best.trees, type="response")
+
+test_2m <- mutate(test2, mods2_predict = mods2_predict)
+nrow(test_1m)
+mods2_roc_test1 <- rocit(score = test_2m$mods2_predict, class = test_2m$y4_live, method = "binormal")
+mods2_AUC <- mods2_roc_test1
+mods2_MSE <- mse( test_2m$y4_live, test_2m$mods2_predict )
+
+mods2_D2  # 0.0.7907725
+mods2_AUC # 0.8925
+mods2_MSE # 0.09357638
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods2_spat_pred <- predict(stack, mods2, 
+                           n.trees = mods2$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods2_spat_pred)
+
+writeRaster(mods2_spat_pred, "~/seed_surv_predict_no_aspect/mods2_.tiff", progress = 'text')
+
+####
+#####
+
+mods3 <- dismo::gbm.step(data=train3, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods3_simp <- gbm.simplify(mods3, n.drops = 100)
+
+mods3 <- dismo::gbm.step(data=train3, 
+                         gbm.x=mods3_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods3_D2 <- 1 - 0.151/0.96
+summary(mods3)
+dismo::gbm.plot(mods3, common.scale = T, smooth = T)
+
+mods3_predict <- predict.gbm(mods3, test3, 
+                             n.trees = mods3$gbm.call$best.trees, type="response")
+
+test_3m <- mutate(test3, mods3_predict = mods3_predict)
+nrow(test_1m)
+mods3_roc_test1 <- rocit(score = test_3m$mods3_predict, class = test_3m$y4_live, method = "binormal")
+mods3_AUC <- mods3_roc_test1
+mods3_MSE <- mse( test_3m$y4_live, test_3m$mods3_predict )
+
+mods3_D2  # 0.8427083
+mods3_AUC # 0.8389
+mods3_MSE # 0.08417602
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods3_spat_pred <- predict(stack, mods3, 
+                           n.trees = mods3$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods3_spat_pred)
+
+writeRaster(mods3_spat_pred, "~/seed_surv_predict_no_aspect/mods3.tiff", progress = 'text')
+
+####
+#####
+
+mods4 <- dismo::gbm.step(data=train4, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods4_simp <- gbm.simplify(mods4, n.drops = 100)
+
+mods4 <- dismo::gbm.step(data=train4, 
+                         gbm.x=mods4_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods4_D2 <- 1 - 0.128/0.964
+summary(mods4)
+dismo::gbm.plot(mods4, common.scale = T, smooth = T)
+
+mods4_predict <- predict.gbm(mods4, test4, 
+                             n.trees = mods4$gbm.call$best.trees, type="response")
+
+test_4m <- mutate(test4, mods4_predict = mods4_predict)
+nrow(test_1m)
+mods4_roc_test1 <- rocit(score = test_4m$mods4_predict, class = test_4m$y4_live, method = "binormal")
+mods4_AUC <- mods4_roc_test1
+mods4_MSE <- mse( test_4m$y4_live, test_4m$mods4_predict )
+
+mods4_D2  # 0.488375
+mods4_AUC # 0.9051
+mods4_MSE # 0.05292492
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods4_spat_pred <- predict(stack, mods4, 
+                           n.trees = mods4$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods4_spat_pred)
+
+writeRaster(mods4_spat_pred, "~/seed_surv_predict_no_aspect/mods4.tiff", progress = 'text')
+
+
+####
+#####
+
+mods5 <- dismo::gbm.step(data=train5, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods5_simp <- gbm.simplify(mods5, n.drops = 100)
+
+mods5 <- dismo::gbm.step(data=train5, 
+                         gbm.x=mods5_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods5_D2 <- 1 - 0.261/0.91
+summary(mods5)
+dismo::gbm.plot(mods5, common.scale = T, smooth = T)
+
+mods5_predict <- predict.gbm(mods5, test5, 
+                             n.trees = mods5$gbm.call$best.trees, type="response")
+
+test_5m <- mutate(test5, mods5_predict = mods5_predict)
+nrow(test_1m)
+mods5_roc_test1 <- rocit(score = test_5m$mods5_predict, class = test_5m$y4_live, method = "binormal")
+mods5_AUC <- mods5_roc_test1
+mods5_MSE <- mse( test_5m$y4_live, test_5m$mods5_predict )
+
+mods5_D2  # 0.7131868
+mods5_AUC # 0.9868
+mods5_MSE # 0.05929037
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods5_spat_pred <- predict(stack, mods5, 
+                           n.trees = mods5$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods5_spat_pred)
+
+writeRaster(mods5_spat_pred, "~/seed_surv_predict_no_aspect/mods5.tiff", progress = 'text')
+
+####
+#####
+
+mods6 <- dismo::gbm.step(data=train6, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods6_simp <- gbm.simplify(mods6, n.drops = 100)
+
+mods6 <- dismo::gbm.step(data=train6, 
+                         gbm.x=mods6_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods6_D2 <- 1 - 0.248/0.948
+summary(mods6)
+dismo::gbm.plot(mods6, common.scale = T, smooth = T)
+
+mods6_predict <- predict.gbm(mods6, test6, 
+                             n.trees = mods6$gbm.call$best.trees, type="response")
+
+test_6m <- mutate(test6, mods6_predict = mods6_predict)
+nrow(test_1m)
+mods6_roc_test1 <- rocit(score = test_6m$mods6_predict, class = test_6m$y4_live, method = "binormal")
+mods6_AUC <- mods6_roc_test1
+mods6_MSE <- mse( test_6m$y4_live, test_6m$mods6_predict )
+
+mods6_D2  # 0.7383966
+mods6_AUC # 0.9618
+mods6_MSE # 0.06238267
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods6_spat_pred <- predict(stack, mods6, 
+                           n.trees = mods6$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods6_spat_pred)
+
+writeRaster(mods6_spat_pred, "~/seed_surv_predict_no_aspect/mods6.tiff", progress = 'text')
+
+#####
+
+mods7 <- dismo::gbm.step(data=train7, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods7_simp <- gbm.simplify(mods7, n.drops = 100)
+
+mods7 <- dismo::gbm.step(data=train7, 
+                         gbm.x=mods7_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods7_D2 <- 1 - 0.286/0.913
+summary(mods7)
+dismo::gbm.plot(mods7, common.scale = T, smooth = T)
+
+mods7_predict <- predict.gbm(mods7, test7, 
+                             n.trees = mods7$gbm.call$best.trees, type="response")
+
+test_7m <- mutate(test7, mods7_predict = mods7_predict)
+nrow(test_1m)
+mods7_roc_test1 <- rocit(score = test_7m$mods7_predict, class = test_7m$y4_live, method = "binormal")
+mods7_AUC <- mods7_roc_test1
+mods7_MSE <- mse( test_7m$y4_live, test_7m$mods7_predict )
+
+mods7_D2  # 0.8028478
+mods7_AUC # 0.9932
+mods7_MSE # 0.05621293
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods7_spat_pred <- predict(stack, mods7, 
+                           n.trees = mods7$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods7_spat_pred)
+
+writeRaster(mods7_spat_pred, "~/seed_surv_predict_no_aspect/mods7.tiff", progress = 'text')
+
+#####
+
+mods8 <- dismo::gbm.step(data=train8, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods8_simp <- gbm.simplify(mods8, n.drops = 100)
+
+mods8 <- dismo::gbm.step(data=train8, 
+                         gbm.x=mods8_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods8_D2 <- 1 - 0.185/0.958
+summary(mods8)
+dismo::gbm.plot(mods8, common.scale = T, smooth = T)
+
+mods8_predict <- predict.gbm(mods8, test8, 
+                             n.trees = mods8$gbm.call$best.trees, type="response")
+
+test_8m <- mutate(test8, mods8_predict = mods8_predict)
+nrow(test_1m)
+mods8_roc_test1 <- rocit(score = test_8m$mods8_predict, class = test_8m$y4_live, method = "binormal")
+mods8_AUC <- mods8_roc_test1
+mods8_MSE <- mse( test_8m$y4_live, test_8m$mods8_predict )
+
+mods8_D2  # 0.8068894
+mods8_AUC # 0.9221
+mods8_MSE # 0.06264731
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods8_spat_pred <- predict(stack, mods8, 
+                           n.trees = mods8$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods8_spat_pred)
+
+writeRaster(mods8_spat_pred, "~/seed_surv_predict_no_aspect/mods8.tiff", progress = 'text')
+
+#####
+
+mods9 <- dismo::gbm.step(data=train9, gbm.x = c(10:49), gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods9_simp <- gbm.simplify(mods9, n.drops = 100)
+
+mods9 <- dismo::gbm.step(data=train9, 
+                         gbm.x=mods9_simp$pred.list[[30]],
+                         gbm.y = 8,
+                         family = "bernoulli", tree.complexity = 3,
+                         learning.rate = 0.01,
+                         bag.fraction = 0.5,
+                         max.trees = 10000,
+                         tolerance.methods = "auto",
+                         plot.folds = TRUE)
+
+mods9_D2 <- 1 - 0.27/0.934
+summary(mods9)
+dismo::gbm.plot(mods9, common.scale = T, smooth = T)
+
+mods9_predict <- predict.gbm(mods9, test9, 
+                             n.trees = mods9$gbm.call$best.trees, type="response")
+
+test_9m <- mutate(test9, mods9_predict = mods9_predict)
+nrow(test_1m)
+mods9_roc_test1 <- rocit(score = test_9m$mods9_predict, class = test_9m$y4_live, method = "binormal")
+mods9_AUC <- mods9_roc_test1
+mods9_MSE <- mse( test_9m$y4_live, test_9m$mods9_predict )
+
+mods9_D2  # 0.7109208
+mods9_AUC # 0.9633
+mods9_MSE # 0.06868778
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict_no_aspect" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods9_spat_pred <- predict(stack, mods9, 
+                           n.trees = mods9$gbm.call$best.trees, 
+                           type="response", progress = 'text')
+
+plot(mods9_spat_pred)
+
+writeRaster(mods9_spat_pred, "~/seed_surv_predict_no_aspect/mods9.tiff", progress = 'text')
+
+#####
+
+mods10 <- dismo::gbm.step(data=train10, gbm.x = c(10:49), gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+
+mods10_simp <- gbm.simplify(mods10, n.drops = 100)
+
+mods10 <- dismo::gbm.step(data=train10, 
+                          gbm.x=mods10_simp$pred.list[[30]],
+                          gbm.y = 8,
+                          family = "bernoulli", tree.complexity = 3,
+                          learning.rate = 0.01,
+                          bag.fraction = 0.5,
+                          max.trees = 10000,
+                          tolerance.methods = "auto",
+                          plot.folds = TRUE)
+
+mods10_D2 <- 1 - 0.125/0.942
+summary(mods10)
+dismo::gbm.plot(mods10, common.scale = T, smooth = T)
+
+mods10_predict <- predict.gbm(mods10, test10, 
+                              n.trees = mods10$gbm.call$best.trees, type="response")
+
+test_10m <- mutate(test10, mods10_predict = mods10_predict)
+nrow(test_1m)
+mods10_roc_test1 <- rocit(score = test_10m$mods10_predict, class = test_10m$y4_live, method = "binormal")
+mods10_AUC <- mods10_roc_test1
+mods10_MSE <- mse( test_10m$y4_live, test_10m$mods10_predict )
+
+mods10_D2  # 0.8673036
+mods10_AUC # 1.0
+mods10_MSE # 0.02328651
+
+files <- list.files("C:/Users/chmarsh/Documents/seed_surv_predict" , 
+                    pattern = ".tif", full.names = T)
+stack <-stack(files)
+
+mods10_spat_pred <- predict(stack, mods10, 
+                            n.trees = mods10$gbm.call$best.trees, 
+                            type="response", progress = 'text')
+
+plot(mods10_spat_pred)
+
+writeRaster(mods10_spat_pred, "~/seed_surv_predict_no_aspect/mods10.tiff", progress = 'text')
+
+
+fitted.values(mods1)
+gbm.plot.fits(mods1, v=0,mask.presence = T, use.factor = F)
+
+############
+############
+########### AUC plots
+############
+############
+
+plot(topo_roc_test10, col = c(1,"gray10"), 
+     legend = F, YIndex = F)
+lines(topo_roc_test10$TPR ~ topo_roc_test9$FPR,
+      col = "#3399FF", lwd = 3, lty = 1, YIndex = T)
+lines(topo_roc_test9$TPR ~ topo_roc_test9$FPR,
+      col = "#0066CC", lwd = 3, lty = 1, YIndex = T)
+lines(topo_roc_test8$TPR ~topo_roc_test8$FPR,
+      col = "#003366", lwd = 3, lty = 1)
+lines(topo_roc_test7$TPR ~ topo_roc_test7$FPR,
+      col = "#006366", lwd = 3, lty = 1)
+lines(topo_roc_test6$TPR ~ topo_roc_test6$FPR,
+      col = "#003399", lwd = 3, lty = 1)
+lines(topo_roc_test5$TPR ~ topo_roc_test5$FPR,
+      col = "#336699", lwd =3, lty =1)
+lines(topo_roc_test4$TPR ~ topo_roc_test4$FPR,
+      col = "#6699CC", lwd =3, lty =1)
+lines(topo_roc_test3$TPR ~ topo_roc_test3$FPR,
+      col = "#3366FF", lwd =3, lty =1)
+lines(topo_roc_test2$TPR ~ topo_roc_test2$FPR,
+      col = "#6999CC", lwd =3, lty =1)
+lines(topo_roc_test1$TPR ~ topo_roc_test1$FPR,
+      col = "#336699", lwd =3, lty =1)
+
+
+plot(topo_NE_roc_test10, col = c(1,"gray10"), 
+     legend = F, YIndex = F)
+lines(topo_NE_roc_test10$TPR ~ topo_NE_roc_test9$FPR,
+      col = "#663333", lwd = 2, lty = 1, YIndex = T)
+lines(topo_NE_roc_test9$TPR ~ topo_NE_roc_test9$FPR,
+      col = "#990033", lwd = 2, lty = 1, YIndex = T)
+lines(topo_NE_roc_test8$TPR ~topo_NE_roc_test8$FPR,
+      col = "F993300", lwd = 2, lty = 1)
+lines(topo_NE_roc_test7$TPR ~ topo_NE_roc_test7$FPR,
+      col = "#FF3300", lwd = 2, lty = 1)
+lines(topo_NE_roc_test6$TPR ~ topo_NE_roc_test6$FPR,
+      col = "#FF3333", lwd = 2, lty = 1)
+lines(topo_NE_roc_test5$TPR ~ topo_NE_roc_test5$FPR,
+      col = "#990033", lwd =2, lty =1)
+lines(topo_NE_roc_test4$TPR ~ topo_NE_roc_test4$FPR,
+      col = "#FF6666", lwd =2, lty =1)
+lines(topo_NE_roc_test3$TPR ~ topo_NE_roc_test3$FPR,
+      col = "#993300", lwd =2, lty =1)
+lines(topo_NE_roc_test2$TPR ~ topo_NE_roc_test2$FPR,
+      col = "#FF0000", lwd =2, lty =1)
+lines(topo_NE_roc_test1$TPR ~ topo_NE_roc_test1$FPR,
+      col = "#CC3300", lwd =2, lty =1)
+
+
+plot(topo_pisr_roc_test10, col = c(1,"gray50"), 
+     legend = T, YIndex = f)
+lines(topo_pisr_roc_test10$TPR ~ topo_pisr_roc_test10$FPR,
+      col = "#99FF00", lwd = 2, lty = 1)
+lines(topo_pisr_roc_test9$TPR ~ topo_pisr_roc_test9$FPR,
+      col = "#33FF00", lwd = 2, lty = 1)
+lines(topo_pisr_roc_test8$TPR ~topo_pisr_roc_test8$FPR,
+      col = "#33CC00", lwd = 2, lty = 1)
+lines(topo_pisr_roc_test7$TPR ~ topo_pisr_roc_test7$FPR,
+      col = "#66CC33", lwd = 2, lty = 1)
+lines(topo_pisr_roc_test6$TPR ~ topo_pisr_roc_test6$FPR,
+      col = "#66CC00", lwd = 2, lty = 1)
+lines(topo_pisr_roc_test5$TPR ~ topo_pisr_roc_test5$FPR,
+      col = "#66CC66", lwd =2, lty =1)
+lines(topo_pisr_roc_test4$TPR ~ topo_pisr_roc_test4$FPR,
+      col = "#003300", lwd =2, lty =1)
+lines(topo_pisr_roc_test3$TPR ~ topo_pisr_roc_test3$FPR,
+      col = "#006633", lwd =2, lty =1)
+lines(topo_pisr_roc_test2$TPR ~ topo_pisr_roc_test2$FPR,
+      col = "#339933", lwd =2, lty =1)
+lines(topo_pisr_roc_test1$TPR ~ topo_pisr_roc_test1$FPR,
+      col = "#339966", lwd =2, lty =1)
+
+
+plot(topo_pisr_NE_roc_test10, col = c(1,"gray10"), 
+     legend = F, YIndex = T)
+lines(topo_pisr_NE_roc_test10$TPR ~ topo_pisr_NE_roc_test10$FPR,
+      col = "#FFCC00", lwd = 2, lty = 1, YIndex = T)
+lines(topo_pisr_NE_roc_test9$TPR ~ topo_pisr_NE_roc_test9$FPR,
+      col = "#FF9900", lwd = 2, lty = 1, YIndex = T)
+lines(topo_pisr_NE_roc_test8$TPR ~topo_pisr_NE_roc_test8$FPR,
+      col = "#FF6600", lwd = 2, lty = 1)
+lines(topo_pisr_NE_roc_test7$TPR ~ topo_pisr_NE_roc_test7$FPR,
+      col = "#CCC00", lwd = 2, lty = 1)
+lines(topo_pisr_NE_roc_test6$TPR ~ topo_pisr_NE_roc_test6$FPR,
+      col = "#CC9900", lwd = 2, lty = 1)
+lines(topo_pisr_NE_roc_test5$TPR ~ topo_pisr_NE_roc_test5$FPR,
+      col = "#999900", lwd =2, lty =1)
+lines(topo_pisr_NE_roc_test4$TPR ~ topo_pisr_NE_roc_test4$FPR,
+      col = "#CCCC33", lwd =2, lty =1)
+lines(topo_pisr_NE_roc_test3$TPR ~ topo_pisr_NE_roc_test3$FPR,
+      col = "#996600", lwd =2, lty =1)
+lines(topo_pisr_NE_roc_test2$TPR ~ topo_pisr_NE_roc_test2$FPR,
+      col = "#CC9933", lwd =2, lty =1)
+lines(topo_pisr_NE_roc_test1$TPR ~ topo_pisr_NE_roc_test1$FPR,
+      col = "#CC6633", lwd =2, lty =1)
+
+plot(mods10_roc_test1, col = c(1,"gray50"), 
+     legend = F, YIndex = F)
+lines(mods10_roc_test1$TPR ~ mods10_roc_test10$FPR,
+      col = "#9900FF", lwd = 2, lty = 1, YIndex = T)
+lines(mods9_roc_test1$TPR ~ mods9_roc_test1$FPR,
+      col = "#330099", lwd = 2, lty = 1, YIndex = T)
+lines(mods8_roc_test1$TPR ~mods8_roc_test1$FPR,
+      col = "#FF0099", lwd = 2, lty = 1)
+lines(mods7_roc_test1$TPR ~ mods7_roc_test1$FPR,
+      col = "#FF00CC", lwd = 2, lty = 1)
+lines(mods6_roc_test1$TPR ~ mods6_roc_test1$FPR,
+      col = "#330066", lwd = 2, lty = 1)
+lines(mods5_roc_test1$TPR ~ mods5_roc_test1$FPR,
+      col = "#CC00FF", lwd =2, lty =1)
+lines(mods4_roc_test1$TPR ~ mods4_roc_test1$FPR,
+      col = "#663399", lwd =2, lty =1)
+lines(mods3_roc_test1$TPR ~ mods3_roc_test1$FPR,
+      col = "#CC6699", lwd =2, lty =1)
+lines(mods2_roc_test1$TPR ~ mods2_roc_test1$FPR,
+      col = "#CC0066", lwd =2, lty =1)
+lines(mods1_roc_test1$TPR ~ mods1_roc_test1$FPR,
+      col = "#990099", lwd =2, lty =1)
+
+library(ggplot2)
+
+############
+############
+########### Sup Mat Figure - Box plot of ensemble model predictions/variable values 
+############
+############
+
+
+F_Plot <- read.csv("C:/Users/chmarsh/Documents/Plots_mod_varis_hist.csv")
+F_100m <- read.csv("C:/Users/chmarsh/Documents/100m_mod_varis_hist.csv")
+F_10m <- read.csv("~/Downloads/10m_mod_varis_hist1.csv")
+
+F_Plot1$Group <- "P"
+F_100m$Group <- "100"
+F_10m$Group <- "10"
+
+names(F_Plot)
+F_Plot1 <- dplyr::select(F_Plot, -c("Plot", "Species", "x", "y", 
+                                    "y1_live","y2_live","y3_live",
+                                    "y4_live"))
+names(F_Plot1)
+names(F_10m)
+
+combined <- rbind(F_Plot, F_100m, F_10m)
+
+names(F_10m)
+boxplot(mod_mean ~ Heat_load, data = F_100m)
+library(dpylr)
+library(tidyr)
+library(ggplot2)
+F_100m %>% drop_na()
+
+summary(F_10m$Topo_Wetne)
+
+bin_size <- 0.1
+
+View(F_10m)
+
+F_10m %>% 
+  mutate(bin_heat = factor(Heat_load%/%bin_size*10)) %>%
+  ggplot(aes(x = bin_heat, y = ToPi_mean))+
+  geom_boxplot()
+
+
+
+F_10m %>% 
+  mutate(bin_ele = factor(Elev%/%50)) %>%
+  ggplot(aes(x = bin_ele, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_heat = factor(Heat_load%/%0.1)) %>%
+  ggplot(aes(x = bin_heat, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_Wet = factor(Topo_Wetne%/%1)) %>%
+  ggplot(aes(x = bin_Wet, y = ToPi_mean))+
+  geom_boxplot()
+
+
+bin_size <- 5
+
+hist(F_10m$Topo_rough)
+hist(F_10m$Slope)
+
+F_10m %>% 
+  mutate(bin_Rou = factor(Topo_rough%/%5)) %>%
+  ggplot(aes(x = bin_Rou, y = ToPi_mean))+
+  geom_boxplot()
+
+
+F_10m %>% 
+  mutate(bin_pos = factor(Topo_pos_i%/%1)) %>%
+  ggplot(aes(x = bin_pos, y = ToPi_mean))+
+  geom_boxplot()
+
+
+F_10m %>% 
+  mutate(bin_Slo = factor(Slope)) %>%
+  ggplot(aes(x = bin_Slo, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_Slope = factor(Slope%/%1)) %>%
+  ggplot(aes(x = bin_Slope, y = ToPi_mean))+
+  geom_boxplot() +
+ coord_cartesian((xlim =c(0, 30)))
+
+
+names(F_10m)
+
+F_10m %>% 
+  mutate(bin_Slo = factor(Li_Jne_Dr1%/%10)) %>%
+  ggplot(aes(x = bin_Slo, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_JanDR = factor(Li_Jan_Dr1%/%10)) %>%
+  ggplot(aes(x = bin_JanDR, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_JanDF = factor(Li_Jan_Df1%/%1)) %>%
+  ggplot(aes(x = bin_JanDF, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_AplDF = factor(Li_Apl_Df1%/%1)) %>%
+  ggplot(aes(x = bin_AplDF, y = ToPi_mean))+
+  geom_boxplot()
+
+names(F_10m)
+
+names(F_10m)
+
+
+
+
+F_10m %>% 
+  mutate(bin_AugDR = factor(Li_Aug_Dr1%/%10)) %>%
+  ggplot(aes(x = bin_AugDR, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_Slope = factor(Slope%/%10)) %>%
+  ggplot(aes(x = bin_Slope, y = ToPi_mean))+
+  geom_boxplot()
+
+F_10m %>% 
+  mutate(bin_MchDR = factor(Li_Mch_Dr1%/%10)) %>%
+  ggplot(aes(x = bin_MchDR, y = mod_mean))+
+  geom_boxplot()
+
+(F_10m2 <- F_10m %>% 
+    mutate(bin_HL = Heat_load%/%0.1)) %>% 
+  ggplot(aes(x = factor(bin_HL), y = mod_mean)) +
+  geom_boxplot() +
+  scale_x_discrete(labels = paste0(unique(F_10m2$bin_HL)
+                                   , "-", unique(F_10m2$bin_HL)+1)) +
+  labs(x = "HL")
+
+
